@@ -129,11 +129,11 @@ def moremiddle(interact_J=1, temp_min=0.5, temp_max=1.5, num_temps=120, pt=1):
     left = (pt-window/2) - temp_min
     right = temp_max - (pt+window) #l/(l+r) shares the non-middle points evenly
     space1 = np.linspace(temp_min, pt-window/2,
-                         num=np.ceil(num_temps*0.8*left/(left+right)), endpoint=True)
+                         num=int(np.ceil(num_temps*0.8*left/(left+right))), endpoint=True)
     space2 = np.linspace(pt-window/2, pt+window/2,
-                         num=np.ceil(num_temps*0.2), endpoint=False)
+                         num=int(np.ceil(num_temps*0.2)), endpoint=False)
     space3 = np.linspace(pt+window/2, temp_max,
-                         num=np.ceil(num_temps*0.8*right/(left+right)), endpoint=True)
+                         num=int(np.ceil(num_temps*0.8*right/(left+right))), endpoint=True)
     # Above, notice numtemps = numtemps*(p+(1-p)*(l+r)/(l+r)) ~= len(linspace)
     tempscaled = np.array(sorted(set([*space1,*space2,*space3])))
     temp = tempscaled*temp_crit
@@ -272,17 +272,14 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
                    eng = True, heat = True, mag = True, susc = True,
                    plotted = True, timed = True, skips=0.2, sweeps=10,
                    middled = False, pt=1, magabs=True, expon=False, alert=True):
-    num_temps = mp.cpu_count()*np.floor(num_temps/mp.cpu_count()) # Make most use of parallelising to all cores
     if eng == False:
         heat = False
     if mag == False:
         susc = False
-    if middled:
-        temps, tempscaled = moremiddle(interact_J, temp_min, temp_max, num_temps, pt)
-    else:
-        temps, tempscaled = temp_vecs(interact_J, temp_min, temp_max, num_temps)
+    tempseng, tempscaledeng = temp_vecs(interact_J, temp_min, temp_max, num_temps)
+    tempsmag, tempscaledmag = moremiddle(interact_J, temp_min, temp_max, num_temps, pt)
     temp_crit = 2 * interact_J / math.log(1+math.sqrt(2))
-    lowtemps = [temp for temp in temps if temp < temp_crit] # For analytical solution plots
+    lowtemps = [temp for temp in tempsmag if temp < temp_crit] # For analytical solution plots
     eps = (temp_crit-max(lowtemps))/4
     for i in range(8): # Get temps close to T_c to show asymptotes
         lowtemps.append(temp_crit-eps/4**i)
@@ -300,7 +297,6 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
     if eng:
         if timed:
             start = time.time()
-        tempseng, tempscaledeng = temp_vecs(interact_J, temp_min, temp_max, num_temps)
         args = [(dims, magnet_H, interact_J, steps, temp, heat, skips, sweeps) for temp in tempscaledeng]
         eng_results = pooling(energy2D, args)
         eng_results = list( map(list, zip(*eng_results)) )
@@ -310,10 +306,11 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
                      index_refs[0], pt, focus=False, label='Simulated')
             axs[index_refs[0]].legend()
             if heat:
-                plotting(axs, tempscaled, eng_results[1], 'Specific Heat Capacity',
+                plotting(axs, tempscaledeng, eng_results[1], 'Specific Heat Capacity',
                          index_refs[1], pt, focus=False, label='Simulated')
                 maxheat = max(eng_results[1])
-                analyt_heat = [(temp,c(temp_crit, interact_J, temp)) for temp in manylowtemps if -0.1<c(temp_crit, interact_J, temp)<maxheat*1.1]
+                analyt_heat = [(temp,c(temp_crit, interact_J, temp)) for temp in manylowtemps
+                               if -0.1<c(temp_crit, interact_J, temp)<maxheat*1.1]
                 analyt_heat = list(zip(*analyt_heat))
                 axs[index_refs[1]].plot(np.divide(analyt_heat[0],temp_crit), analyt_heat[1], color='g',
                                                    label='Analytic', linewidth=0.75)
@@ -327,7 +324,7 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
     if mag:
         if timed:
             start = time.time()
-        args = [(dims, magnet_H, interact_J, steps, temp, susc, skips, sweeps) for temp in tempscaled]        
+        args = [(dims, magnet_H, interact_J, steps, temp, susc, skips, sweeps) for temp in tempscaledmag]        
         mag_results = pooling(magnetization2D, args)
         mag_results = np.array(list( map(list, zip(*mag_results)) ))
         if magabs:
@@ -335,7 +332,7 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
             else: mag_results = abs(mag_results)
         results.extend(mag_results)
         if plotted:
-            plotting(axs, tempscaled, mag_results[0], 'Specific Mag.', index_refs[eng + heat], pt,
+            plotting(axs, tempscaledmag, mag_results[0], 'Specific Mag.', index_refs[eng + heat], pt,
                      focus=False, label='Simulated')
             maxmag = max(mag_results[0])
             analyt_mag = [(temp,m(interact_J,temp)) for temp in manylowtemps if m(interact_J,temp)<maxmag]
@@ -347,7 +344,7 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
             axs[index_refs[eng + heat]].legend()
             
             if susc:
-                plotting(axs, tempscaled, mag_results[1], 'Specific Mag. Susc.',
+                plotting(axs, tempscaledmag, mag_results[1], 'Specific Mag. Susc.',
                          index_refs[eng + heat + mag], pt, focus=False, label='Simulated')
                 maxsusc = max(mag_results[1])
                 analyt_susc = [(temp,s(dims, magnet_H, interact_J, temp)) for temp in manylowtemps if s(dims, magnet_H, interact_J, temp)<maxsusc]
@@ -370,9 +367,11 @@ def parallel_temps(dims = (10,10), magnet_H = 0, interact_J = 1, steps = 125,
             fig.delaxes(axs[index_refs[i]])
         plt.tight_layout(h_pad=1)
         plt.show()
-    if expon: # \propto|T-T_c| not T/T_c which is only useful for plots.
-        return [np.abs(temps-temp_crit), *results]
-    return [tempscaled,*results]
+    if expon:
+        # \propto|T-T_c|, not T/T_c which is only useful for plots, so implement this.
+        pass
+    return [*results]
+# The energy middlemore ones will have used different temperatures so need to think how
 
 
 
@@ -401,5 +400,3 @@ if run_example:
                 eng = True, heat = True, mag = True, susc = True,
                 plotted = True, timed = True, skips=0.2, sweeps=10,
                 middled = True, pt=1, magabs=True, expon=True, alert=True)
-
-
